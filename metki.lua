@@ -1,4 +1,4 @@
-script_name("Treasure Map Manager")
+script_name("Klad Aurora")
 script_author("hamudov")
 
 require "lib.moonloader"
@@ -7,20 +7,23 @@ local encoding = require "encoding"
 encoding.default = 'CP1251'
 local u8 = encoding.UTF8
 
--- Переменные
+local imgui = require 'imgui'
+local sw, sh = getScreenResolution()
+
 local treasureMarkers = {}
 local iconId = 41
 local renderDist = 0
 local saveDir = getWorkingDirectory() .. "\\config"
 local savePath = saveDir .. "\\treasure_markers.json"
 
--- Переменные для интерфейса
 local showWindow = false
-local windowMode = "main" -- main, add, manual_coords, list, delete
-local inputText = ""
-local inputFieldIndex = 1
-local manualX, manualY, manualZ = 0, 0, 0
-local selectedMarkerId = nil
+local windowX, windowY = sw / 2 - 300, sh / 2 - 250
+local inputName = imgui.ImBuffer(256)
+local inputX = imgui.ImBuffer(256)
+local inputY = imgui.ImBuffer(256)
+local inputZ = imgui.ImBuffer(256)
+local selectedMarker = 0
+local windowMode = 1
 
 function getMyPlayerId()
     local result, id = sampGetPlayerIdByCharHandle(PLAYER_PED)
@@ -79,7 +82,7 @@ function saveMarkers()
         local tempSave = {}
         for _, m in ipairs(treasureMarkers) do
             table.insert(tempSave, {
-                name = m.name or "Клад",
+                name = m.name or "Klad",
                 x = m.x, 
                 y = m.y, 
                 z = m.z,
@@ -93,7 +96,6 @@ function saveMarkers()
         }
         file:write(encodeJson(saveData))
         file:close()
-        sampAddChatMessage(("{00FF00}[Клад] {FFFFFF}Маркеры сохранены!"), -1)
     end
 end
 
@@ -112,7 +114,7 @@ function loadMarkers()
 end
 
 function addTreasureMarker(name, x, y, z)
-    if not name then name = "Клад #" .. (#treasureMarkers + 1) end
+    if not name or name == "" then name = "Klad #" .. (#treasureMarkers + 1) end
     
     table.insert(treasureMarkers, {
         name = name,
@@ -124,7 +126,6 @@ function addTreasureMarker(name, x, y, z)
     })
     saveMarkers()
     updateBlipsVisibility()
-    sampAddChatMessage(("{00FF00}[Клад] {FFFFFF}Маркер '" .. name .. "' добавлен!"), -1)
 end
 
 function deleteTreasureMarker(index)
@@ -132,19 +133,118 @@ function deleteTreasureMarker(index)
         if treasureMarkers[index].blip then
             removeBlip(treasureMarkers[index].blip)
         end
-        local markerName = treasureMarkers[index].name
         table.remove(treasureMarkers, index)
         saveMarkers()
-        sampAddChatMessage(("{00FF00}[Клад] {FFFFFF}Маркер '" .. markerName .. "' удален!"), -1)
+        refreshAllBlips()
     end
 end
 
-function toggleWindow()
-    showWindow = not showWindow
-    windowMode = "main"
-    inputText = ""
-    if showWindow then
-        sampAddChatMessage(("{00FF00}[Клад] {FFFFFF}Окно управления открыто!"), -1)
+function drawWindow()
+    if not showWindow then return end
+    
+    imgui.SetNextWindowSize(imgui.ImVec2(650, 500), imgui.Cond_FirstUseEver)
+    
+    if imgui.Begin("Klad Manager", showWindow) then
+        imgui.Text("Markers: " .. #treasureMarkers)
+        imgui.Separator()
+        
+        if imgui.BeginTabBar("##tabs", imgui.ImGuiTabBarFlags_None) then
+            
+            if imgui.BeginTabItem("Add") then
+                imgui.Text("Add New Marker")
+                imgui.InputText("##markerName", inputName, 256)
+                
+                local px, py, pz = getCharCoordinates(PLAYER_PED)
+                imgui.Text(string.format("Current Position: X: %.1f Y: %.1f Z: %.1f", px, py, pz))
+                
+                if imgui.Button("Add From Current Position", imgui.ImVec2(200, 30)) then
+                    addTreasureMarker(inputName.v, px, py, pz)
+                    inputName.v = ""
+                end
+                
+                imgui.Separator()
+                imgui.Text("Or Add By Coordinates:")
+                
+                imgui.InputText("X##X", inputX, 256)
+                imgui.InputText("Y##Y", inputY, 256)
+                imgui.InputText("Z##Z", inputZ, 256)
+                
+                if imgui.Button("Add By Coordinates", imgui.ImVec2(200, 30)) then
+                    local x = tonumber(inputX.v) or 0
+                    local y = tonumber(inputY.v) or 0
+                    local z = tonumber(inputZ.v) or 0
+                    addTreasureMarker(inputName.v, x, y, z)
+                    inputName.v = ""
+                    inputX.v = ""
+                    inputY.v = ""
+                    inputZ.v = ""
+                end
+                
+                imgui.EndTabItem()
+            end
+            
+            if imgui.BeginTabItem("List") then
+                imgui.Text("All Markers:")
+                imgui.Separator()
+                
+                local px, py, pz = getCharCoordinates(PLAYER_PED)
+                
+                if imgui.BeginChild("##markersList", imgui.ImVec2(600, 350)) then
+                    for i, mark in ipairs(treasureMarkers) do
+                        local dist = getDistance(px, py, pz, mark.x, mark.y, mark.z)
+                        imgui.Text(string.format("[%d] %s (%.1f m)", i, mark.name, dist))
+                        imgui.Text(string.format("    X: %.1f Y: %.1f Z: %.1f", mark.x, mark.y, mark.z))
+                        
+                        if imgui.Button("Delete##" .. i, imgui.ImVec2(100, 20)) then
+                            deleteTreasureMarker(i)
+                        end
+                        imgui.Separator()
+                    end
+                    imgui.EndChild()
+                end
+                
+                imgui.EndTabItem()
+            end
+            
+            if imgui.BeginTabItem("Settings") then
+                imgui.Text("Settings:")
+                imgui.Separator()
+                
+                local distValue = imgui.ImInt(renderDist)
+                if imgui.SliderInt("Render Distance", distValue, 0, 500) then
+                    renderDist = distValue.v
+                    saveMarkers()
+                    refreshAllBlips()
+                end
+                
+                local iconValue = imgui.ImInt(iconId)
+                if imgui.SliderInt("Icon ID", iconValue, 1, 100) then
+                    iconId = iconValue.v
+                    saveMarkers()
+                    refreshAllBlips()
+                end
+                
+                if imgui.Button("Clear All Markers", imgui.ImVec2(200, 30)) then
+                    for _, mark in ipairs(treasureMarkers) do
+                        if mark.blip then
+                            removeBlip(mark.blip)
+                        end
+                    end
+                    treasureMarkers = {}
+                    saveMarkers()
+                end
+                
+                if imgui.Button("Save", imgui.ImVec2(200, 30)) then
+                    saveMarkers()
+                end
+                
+                imgui.EndTabItem()
+            end
+            
+            imgui.EndTabBar()
+        end
+        
+        imgui.End()
     end
 end
 
@@ -164,28 +264,30 @@ function main()
         end
     end)
 
-    -- Команда для открытия окна
-    sampRegisterChatCommand("klua", function()
-        toggleWindow()
+    lua_thread.create(function()
+        while true do
+            wait(0)
+            drawWindow()
+        end
     end)
 
-    -- Команда быстрого добавления маркера
+    sampRegisterChatCommand("klua", function()
+        showWindow = not showWindow
+    end)
+
     sampRegisterChatCommand("kadd", function(arg)
-        local name = arg ~= "" and arg or "Клад #" .. (#treasureMarkers + 1)
+        local name = arg ~= "" and arg or "Klad #" .. (#treasureMarkers + 1)
         local x, y, z = getCharCoordinates(PLAYER_PED)
         
         if isMarkerNearby(x, y, z, 10.0) then
-            sampAddChatMessage(("{FFFF00}[Клад] {FFFFFF}Слишком близко к уже существующему маркеру!"), -1)
             return
         end
         
         addTreasureMarker(name, x, y, z)
     end)
 
-    -- Команда для удаления ближайшего маркера
     sampRegisterChatCommand("kdel", function()
         if #treasureMarkers == 0 then
-            sampAddChatMessage(("{FF0000}[Клад] {FFFFFF}Нет маркеров!"), -1)
             return
         end
         
@@ -206,58 +308,14 @@ function main()
         end
     end)
 
-    -- Команда для установки дистанции отрисовки
-    sampRegisterChatCommand("kdist", function(arg)
-        local dist = tonumber(arg)
-        if dist and dist >= 0 then
-            renderDist = dist
-            saveMarkers()
-            refreshAllBlips()
-            if dist == 0 then
-                sampAddChatMessage(("{00FF00}[Клад] {FFFFFF}Отрисовка: все маркеры видны."), -1)
-            else
-                sampAddChatMessage(("{00FF00}[Клад] {FFFFFF}Отрисовка: только в радиусе " .. dist .. "м."), -1)
-            end
-        else
-            sampAddChatMessage(("{FF0000}[Клад] {FFFFFF}Использование: /kdist [расстояние]"), -1)
-        end
-    end)
-
-    -- Команда для изменения иконки
-    sampRegisterChatCommand("kicon", function(arg)
-        local id = tonumber(arg)
-        if id then
-            iconId = id
-            saveMarkers()
-            refreshAllBlips()
-            sampAddChatMessage(("{00FF00}[Клад] {FFFFFF}Иконка изменена на: " .. id), -1)
-        else
-            sampAddChatMessage(("{FF0000}[Клад] {FFFFFF}Использование: /kicon [ID]"), -1)
-        end
-    end)
-
-    -- Команда для помощи
-    sampRegisterChatCommand("khelp", function()
-        sampAddChatMessage(("{00FF00}[Клад] {FFFFFF}--- СПРАВКА ---"), -1)
-        sampAddChatMessage(("{FFFF00}/klua {FFFFFF}--- Открыть окно управления"), -1)
-        sampAddChatMessage(("{FFFF00}/kadd [название] {FFFFFF}--- Добавить маркер"), -1)
-        sampAddChatMessage(("{FFFF00}/kdel {FFFFFF}--- Удалить ближайший маркер"), -1)
-        sampAddChatMessage(("{FFFF00}/kdist [м] {FFFFFF}--- Расстояние отрисовки"), -1)
-        sampAddChatMessage(("{FFFF00}/kicon [ID] {FFFFFF}--- Изменить иконку"), -1)
-    end)
-
     wait(-1)
 end
 
 function sampev.onServerMessage(color, text)
-    local cleanText = text:gsub("{%x%x%x%x%x%x}", "")
     local myId = getMyPlayerId()
     if not myId then return end
     
-    local myName = sampGetPlayerNickname(myId)
-    local pattern = ("Вы начали копать") 
-
-    if cleanText:find(pattern) then
+    if text:find("begin dig") or text:find("started dig") or text:find("kopay") then
         lua_thread.create(function()
             wait(500)
             if getActiveInterior() ~= 0 then return end
@@ -265,7 +323,7 @@ function sampev.onServerMessage(color, text)
             local x, y, z = getCharCoordinates(PLAYER_PED)
             if x ~= 0 or y ~= 0 then
                 if not isMarkerNearby(x, y, z, 10.0) then
-                    addTreasureMarker("Найденный клад", x, y, z)
+                    addTreasureMarker("Found Treasure", x, y, z)
                 end
             end
         end)
