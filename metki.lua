@@ -7,9 +7,6 @@ local encoding = require "encoding"
 encoding.default = 'CP1251'
 local u8 = encoding.UTF8
 
-local imgui = require 'imgui'
-local sw, sh = getScreenResolution()
-
 local treasureMarkers = {}
 local iconId = 41
 local renderDist = 0
@@ -17,13 +14,30 @@ local saveDir = getWorkingDirectory() .. "\\config"
 local savePath = saveDir .. "\\treasure_markers.json"
 
 local showWindow = false
-local windowX, windowY = sw / 2 - 300, sh / 2 - 250
-local inputName = imgui.ImBuffer(256)
-local inputX = imgui.ImBuffer(256)
-local inputY = imgui.ImBuffer(256)
-local inputZ = imgui.ImBuffer(256)
+local windowTab = 1
+local inputName = ""
+local inputX = ""
+local inputY = ""
+local inputZ = ""
 local selectedMarker = 0
-local windowMode = 1
+
+local screenWidth, screenHeight = getScreenResolution()
+local windowWidth = 700
+local windowHeight = 500
+local windowX = (screenWidth - windowWidth) / 2
+local windowY = (screenHeight - windowHeight) / 2
+
+local colors = {
+    bg = 0x1A1A1AFF,
+    border = 0xFF6600FF,
+    text = 0xFFFFFFFF,
+    header = 0xFF6600FF,
+    button = 0xFF6600FF,
+    buttonHover = 0xFF8800FF,
+    success = 0x00FF00FF,
+    error = 0xFF0000FF,
+    warning = 0xFFFF00FF
+}
 
 function getMyPlayerId()
     local result, id = sampGetPlayerIdByCharHandle(PLAYER_PED)
@@ -139,113 +153,165 @@ function deleteTreasureMarker(index)
     end
 end
 
+function drawBox(x, y, w, h, color)
+    renderDrawBox(x, y, w, h, 2, color, color)
+end
+
+function drawText(text, x, y, color, scale)
+    renderFonts(x, y, x + 200, y + 20, color, text, 0, scale or 1, 1)
+end
+
 function drawWindow()
     if not showWindow then return end
     
-    imgui.SetNextWindowSize(imgui.ImVec2(650, 500), imgui.Cond_FirstUseEver)
+    -- Background
+    drawBox(windowX, windowY, windowWidth, windowHeight, colors.bg)
     
-    if imgui.Begin("Klad Manager", showWindow) then
-        imgui.Text("Markers: " .. #treasureMarkers)
-        imgui.Separator()
-        
-        if imgui.BeginTabBar("##tabs", imgui.ImGuiTabBarFlags_None) then
-            
-            if imgui.BeginTabItem("Add") then
-                imgui.Text("Add New Marker")
-                imgui.InputText("##markerName", inputName, 256)
-                
-                local px, py, pz = getCharCoordinates(PLAYER_PED)
-                imgui.Text(string.format("Current Position: X: %.1f Y: %.1f Z: %.1f", px, py, pz))
-                
-                if imgui.Button("Add From Current Position", imgui.ImVec2(200, 30)) then
-                    addTreasureMarker(inputName.v, px, py, pz)
-                    inputName.v = ""
-                end
-                
-                imgui.Separator()
-                imgui.Text("Or Add By Coordinates:")
-                
-                imgui.InputText("X##X", inputX, 256)
-                imgui.InputText("Y##Y", inputY, 256)
-                imgui.InputText("Z##Z", inputZ, 256)
-                
-                if imgui.Button("Add By Coordinates", imgui.ImVec2(200, 30)) then
-                    local x = tonumber(inputX.v) or 0
-                    local y = tonumber(inputY.v) or 0
-                    local z = tonumber(inputZ.v) or 0
-                    addTreasureMarker(inputName.v, x, y, z)
-                    inputName.v = ""
-                    inputX.v = ""
-                    inputY.v = ""
-                    inputZ.v = ""
-                end
-                
-                imgui.EndTabItem()
-            end
-            
-            if imgui.BeginTabItem("List") then
-                imgui.Text("All Markers:")
-                imgui.Separator()
-                
-                local px, py, pz = getCharCoordinates(PLAYER_PED)
-                
-                if imgui.BeginChild("##markersList", imgui.ImVec2(600, 350)) then
-                    for i, mark in ipairs(treasureMarkers) do
-                        local dist = getDistance(px, py, pz, mark.x, mark.y, mark.z)
-                        imgui.Text(string.format("[%d] %s (%.1f m)", i, mark.name, dist))
-                        imgui.Text(string.format("    X: %.1f Y: %.1f Z: %.1f", mark.x, mark.y, mark.z))
-                        
-                        if imgui.Button("Delete##" .. i, imgui.ImVec2(100, 20)) then
-                            deleteTreasureMarker(i)
-                        end
-                        imgui.Separator()
-                    end
-                    imgui.EndChild()
-                end
-                
-                imgui.EndTabItem()
-            end
-            
-            if imgui.BeginTabItem("Settings") then
-                imgui.Text("Settings:")
-                imgui.Separator()
-                
-                local distValue = imgui.ImInt(renderDist)
-                if imgui.SliderInt("Render Distance", distValue, 0, 500) then
-                    renderDist = distValue.v
-                    saveMarkers()
-                    refreshAllBlips()
-                end
-                
-                local iconValue = imgui.ImInt(iconId)
-                if imgui.SliderInt("Icon ID", iconValue, 1, 100) then
-                    iconId = iconValue.v
-                    saveMarkers()
-                    refreshAllBlips()
-                end
-                
-                if imgui.Button("Clear All Markers", imgui.ImVec2(200, 30)) then
-                    for _, mark in ipairs(treasureMarkers) do
-                        if mark.blip then
-                            removeBlip(mark.blip)
-                        end
-                    end
-                    treasureMarkers = {}
-                    saveMarkers()
-                end
-                
-                if imgui.Button("Save", imgui.ImVec2(200, 30)) then
-                    saveMarkers()
-                end
-                
-                imgui.EndTabItem()
-            end
-            
-            imgui.EndTabBar()
+    -- Border
+    renderDrawLine(windowX, windowY, windowX + windowWidth, windowY, 2, colors.border)
+    renderDrawLine(windowX, windowY, windowX, windowY + windowHeight, 2, colors.border)
+    renderDrawLine(windowX + windowWidth, windowY, windowX + windowWidth, windowY + windowHeight, 2, colors.border)
+    renderDrawLine(windowX, windowY + windowHeight, windowX + windowWidth, windowY + windowHeight, 2, colors.border)
+    
+    -- Header
+    drawBox(windowX, windowY, windowWidth, 40, colors.header)
+    renderFonts(windowX + 10, windowY + 10, windowX + windowWidth - 10, windowY + 30, colors.text, "KLAD MANAGER [" .. #treasureMarkers .. " markers]", 0, 1.2, 1)
+    
+    -- Close button
+    if renderGetCursorPos then
+        local mx, my = getCursorPos()
+        local closeX, closeY = windowX + windowWidth - 30, windowY + 10
+        if mx >= closeX and mx <= closeX + 20 and my >= closeY and my <= closeY + 20 then
+            drawBox(closeX, closeY, 20, 20, colors.error)
+        else
+            drawBox(closeX, closeY, 20, 20, colors.button)
         end
-        
-        imgui.End()
+        renderFonts(closeX + 5, closeY + 5, closeX + 25, closeY + 25, colors.text, "X", 0, 1, 1)
     end
+    
+    -- Tabs
+    local tabY = windowY + 50
+    local tabWidth = windowWidth / 3
+    
+    for i = 1, 3 do
+        local tabX = windowX + (i - 1) * tabWidth
+        local tabColor = (windowTab == i) and colors.header or colors.button
+        drawBox(tabX, tabY, tabWidth, 35, tabColor)
+        
+        local tabNames = {"ADD", "LIST", "SETTINGS"}
+        renderFonts(tabX + 10, tabY + 8, tabX + tabWidth - 10, tabY + 27, colors.text, tabNames[i], 0, 1, 1)
+    end
+    
+    -- Content area
+    local contentY = tabY + 40
+    local contentHeight = windowHeight - (contentY - windowY) - 10
+    
+    if windowTab == 1 then
+        drawAddTab(contentY, contentHeight)
+    elseif windowTab == 2 then
+        drawListTab(contentY, contentHeight)
+    elseif windowTab == 3 then
+        drawSettingsTab(contentY, contentHeight)
+    end
+end
+
+function drawAddTab(startY, height)
+    local y = startY + 10
+    
+    -- Name input
+    renderFonts(windowX + 10, y, windowX + 100, y + 20, colors.text, "Name:", 0, 1, 1)
+    drawBox(windowX + 100, y - 5, windowWidth - 120, 25, colors.bg)
+    renderFonts(windowX + 105, y, windowX + windowWidth - 20, y + 20, colors.text, inputName, 0, 1, 1)
+    
+    y = y + 40
+    
+    -- Current position
+    local px, py, pz = getCharCoordinates(PLAYER_PED)
+    renderFonts(windowX + 10, y, windowX + windowWidth - 10, y + 20, colors.success, 
+        string.format("Current: X:%.1f Y:%.1f Z:%.1f", px, py, pz), 0, 1, 1)
+    
+    y = y + 30
+    
+    -- Add from current button
+    drawBox(windowX + 10, y, 200, 30, colors.button)
+    renderFonts(windowX + 20, y + 5, windowX + 200, y + 25, colors.text, "Add From Current", 0, 0.9, 1)
+    
+    y = y + 40
+    
+    -- Manual coordinates
+    renderFonts(windowX + 10, y, windowX + 200, y + 20, colors.text, "Or enter coordinates:", 0, 1, 1)
+    
+    y = y + 25
+    renderFonts(windowX + 10, y, windowX + 50, y + 20, colors.text, "X:", 0, 1, 1)
+    drawBox(windowX + 50, y - 5, 100, 25, colors.bg)
+    renderFonts(windowX + 55, y, windowX + 145, y + 20, colors.text, inputX, 0, 1, 1)
+    
+    renderFonts(windowX + 160, y, windowX + 200, y + 20, colors.text, "Y:", 0, 1, 1)
+    drawBox(windowX + 200, y - 5, 100, 25, colors.bg)
+    renderFonts(windowX + 205, y, windowX + 295, y + 20, colors.text, inputY, 0, 1, 1)
+    
+    renderFonts(windowX + 310, y, windowX + 350, y + 20, colors.text, "Z:", 0, 1, 1)
+    drawBox(windowX + 350, y - 5, 100, 25, colors.bg)
+    renderFonts(windowX + 355, y, windowX + 445, y + 20, colors.text, inputZ, 0, 1, 1)
+    
+    y = y + 30
+    
+    -- Add by coordinates button
+    drawBox(windowX + 10, y, 200, 30, colors.button)
+    renderFonts(windowX + 20, y + 5, windowX + 200, y + 25, colors.text, "Add By Coordinates", 0, 0.9, 1)
+end
+
+function drawListTab(startY, height)
+    local y = startY + 10
+    local px, py, pz = getCharCoordinates(PLAYER_PED)
+    
+    if #treasureMarkers == 0 then
+        renderFonts(windowX + 10, y, windowX + windowWidth - 10, y + 20, colors.warning, "No markers!", 0, 1, 1)
+        return
+    end
+    
+    for i, mark in ipairs(treasureMarkers) do
+        if y > startY + height - 40 then break end
+        
+        local dist = getDistance(px, py, pz, mark.x, mark.y, mark.z)
+        renderFonts(windowX + 10, y, windowX + windowWidth - 10, y + 20, colors.success, 
+            string.format("[%d] %s (%.1f m)", i, mark.name, dist), 0, 1, 1)
+        
+        renderFonts(windowX + 20, y + 20, windowX + windowWidth - 10, y + 35, colors.text, 
+            string.format("X:%.1f Y:%.1f Z:%.1f", mark.x, mark.y, mark.z), 0, 0.8, 1)
+        
+        -- Delete button
+        drawBox(windowX + windowWidth - 100, y + 15, 90, 25, colors.error)
+        renderFonts(windowX + windowWidth - 95, y + 20, windowX + windowWidth - 15, y + 35, colors.text, "Delete", 0, 0.9, 1)
+        
+        y = y + 50
+    end
+end
+
+function drawSettingsTab(startY, height)
+    local y = startY + 10
+    
+    -- Render distance
+    renderFonts(windowX + 10, y, windowX + 200, y + 20, colors.text, "Render Distance (0 = all):", 0, 1, 1)
+    drawBox(windowX + 250, y - 5, 100, 25, colors.bg)
+    renderFonts(windowX + 255, y, windowX + 345, y + 20, colors.text, tostring(renderDist), 0, 1, 1)
+    
+    y = y + 40
+    
+    -- Icon ID
+    renderFonts(windowX + 10, y, windowX + 200, y + 20, colors.text, "Icon ID:", 0, 1, 1)
+    drawBox(windowX + 250, y - 5, 100, 25, colors.bg)
+    renderFonts(windowX + 255, y, windowX + 345, y + 20, colors.text, tostring(iconId), 0, 1, 1)
+    
+    y = y + 40
+    
+    -- Save button
+    drawBox(windowX + 10, y, 150, 30, colors.success)
+    renderFonts(windowX + 20, y + 5, windowX + 150, y + 25, colors.text, "Save", 0, 1, 1)
+    
+    -- Clear button
+    drawBox(windowX + 170, y, 150, 30, colors.error)
+    renderFonts(windowX + 180, y + 5, windowX + 310, y + 25, colors.text, "Clear All", 0, 1, 1)
 end
 
 function main()
@@ -280,14 +346,17 @@ function main()
         local x, y, z = getCharCoordinates(PLAYER_PED)
         
         if isMarkerNearby(x, y, z, 10.0) then
+            sampAddChatMessage("{FFFF00}[Klad] {FFFFFF}Too close to existing marker!", -1)
             return
         end
         
         addTreasureMarker(name, x, y, z)
+        sampAddChatMessage("{00FF00}[Klad] {FFFFFF}Marker added!", -1)
     end)
 
     sampRegisterChatCommand("kdel", function()
         if #treasureMarkers == 0 then
+            sampAddChatMessage("{FF0000}[Klad] {FFFFFF}No markers!", -1)
             return
         end
         
@@ -305,6 +374,7 @@ function main()
         
         if closestIdx then
             deleteTreasureMarker(closestIdx)
+            sampAddChatMessage("{00FF00}[Klad] {FFFFFF}Marker deleted!", -1)
         end
     end)
 
